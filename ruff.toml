@@ -1,0 +1,17 @@
+line-length = 100
+target-version = "py312"
+
+exclude = ["legacy", ".venv", "notebooks"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N", "D"]
+ignore = [
+    "D203",  # conflicts with D211
+    "D213",  # conflicts with D212
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["D"]
+
+[lint.pydocstyle]
+convention = "google"

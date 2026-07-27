@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Experiment tracking / pipeline state
+mlruns/
+mlflow.db
+.zen/
+outputs/
+
+# DVC keeps pointers in git, never the payload
+/data/raw/*
+!/data/raw/*.dvc
+!/data/raw/.gitignore
+.dvc/cache/
+.dvc/tmp/
+
+# Generated reports
+monitoring/reports/
+graphify-out/
+
+# OS
+.DS_Store
