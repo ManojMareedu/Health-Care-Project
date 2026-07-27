@@ -7,6 +7,7 @@ and both surfaces agree because they share one scoring module.
 
 from __future__ import annotations
 
+import joblib
 import pytest
 
 from src.healthcare_mlops import config, inference
@@ -83,6 +84,71 @@ def test_shared_schema_rejects_bad_input():
     ):
         with pytest.raises(ValidationError):
             ClaimFeatures(**bad)
+
+
+def test_serving_path_does_not_import_mlflow():
+    """Guard the dependency fix that unblocked the hosted deploy.
+
+    Importing mlflow pulls in pyarrow, sqlalchemy, and alembic. On a host whose
+    Python has no prebuilt pyarrow wheel, the install tries to compile pyarrow
+    and fails for want of cmake -- which is exactly how the first Streamlit Cloud
+    deploy died. Nothing on the serving path may reach for mlflow again.
+    """
+    import ast
+    from pathlib import Path
+
+    serving_modules = [
+        Path("src/healthcare_mlops/inference.py"),
+        Path("src/healthcare_mlops/explain.py"),
+        Path("src/healthcare_mlops/schemas.py"),
+        Path("src/healthcare_mlops/config.py"),
+        Path("app/api/main.py"),
+        Path("app/dashboard/app.py"),
+    ]
+    for module in serving_modules:
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            assert not any(n.split(".")[0] == "mlflow" for n in names), (
+                f"{module} imports mlflow; the serving path must stay mlflow-free"
+            )
+
+
+@needs_model
+def test_joblib_loader_matches_mlflow_loader():
+    """The exported artefact must score identically however it is loaded.
+
+    Serving reads the pickle directly while training writes MLflow format. If
+    those two ever disagree, the deployed model is not the evaluated model.
+    """
+    mlflow_sklearn = pytest.importorskip("mlflow.sklearn")
+
+    frame = ClaimFeatures(**VALID_CLAIM).to_frame()
+    via_joblib = joblib.load(config.CLASSIFIER_PICKLE)
+    via_mlflow = mlflow_sklearn.load_model(str(config.CLASSIFIER_DIR))
+
+    assert via_joblib.predict(frame) == via_mlflow.predict(frame)
+    assert (via_joblib.predict_proba(frame) == via_mlflow.predict_proba(frame)).all()
+
+    regressor_joblib = joblib.load(config.REGRESSOR_PICKLE)
+    regressor_mlflow = mlflow_sklearn.load_model(str(config.REGRESSOR_DIR))
+    assert regressor_joblib.predict(frame) == regressor_mlflow.predict(frame)
+
+
+@needs_model
+def test_shap_background_loads_without_a_parquet_engine():
+    """The background is CSV so reading it needs no pyarrow/fastparquet."""
+    from src.healthcare_mlops import explain
+
+    background = explain.load_background()
+    assert background is not None
+    assert list(background.columns) == config.FEATURE_COLUMNS
+    assert config.SHAP_BACKGROUND_FILE.suffix == ".csv"
 
 
 @needs_model

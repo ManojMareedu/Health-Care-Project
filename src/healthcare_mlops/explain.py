@@ -155,4 +155,4 @@ def load_background() -> pd.DataFrame | None:
     """
     if not config.SHAP_BACKGROUND_FILE.exists():
         return None
-    return pd.read_parquet(config.SHAP_BACKGROUND_FILE)
+    return pd.read_csv(config.SHAP_BACKGROUND_FILE)

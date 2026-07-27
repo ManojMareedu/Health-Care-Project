@@ -199,17 +199,43 @@ for the same claim — there is one scoring path, exposed two ways.
 ### Deploying the dashboard yourself
 
 Streamlit Community Cloud is free for public repositories and needs no card. The
-repo is already configured for it — `requirements.txt` and `packages.txt`
-(`libgomp1`, which XGBoost needs) sit at the root, and the app loads
-`exported_model/` from the repo, so there is no database, secret, or environment
-variable to set.
+repo carries a deployment-specific configuration so the hosted build stays small
+and reproducible:
+
+| File | Purpose |
+|---|---|
+| `requirements-streamlit.txt` | Only what the dashboard imports — no mlflow, zenml, dvc, or evidently |
+| `runtime.txt` | Pins Python to 3.12, the version the model was pickled under |
+| `packages.txt` | `libgomp1`, the OpenMP runtime XGBoost needs on Debian |
+
+The app loads `exported_model/` from the repo, so there is no database, secret,
+or environment variable to configure.
 
 1. Sign in at <https://share.streamlit.io> with GitHub and authorize it
 2. **Create app** -> **Deploy a public app from GitHub**
 3. Repository `ManojMareedu/Health-Care-Project`, branch `main`, main file
    `app/dashboard/app.py`
-4. Under **Advanced settings**, set Python version to **3.12**
-5. Deploy — the first build takes a few minutes while it installs the dependencies
+4. Under **Advanced settings**, set the requirements file to
+   `requirements-streamlit.txt` and Python version to **3.12**
+5. Deploy
+
+#### Why a separate requirements file
+
+The first deploy failed, and the cause is worth recording. Streamlit Cloud
+provisioned Python 3.14, `mlflow` depends on `pyarrow`, and pyarrow had no
+prebuilt wheel for 3.14 — so the installer tried to compile it from source and
+died with `error: command 'cmake' failed: No such file or directory`.
+
+The fix was not to add cmake. The dashboard only needs to load a pickled
+scikit-learn pipeline and call `.predict()`; it never touches MLflow's tracking
+client. So serving now loads the pipeline with `joblib` directly and MLflow is
+absent from the serving path entirely — dropping sqlalchemy, alembic, and the
+rest of the tracking stack with it. `runtime.txt` pins the interpreter so a
+future dependency cannot silently land on a Python version with no wheels.
+
+Worth being precise: pyarrow is *still* in the resolved tree, because Streamlit
+itself requires `pyarrow>=7`. It cannot be removed. What changed is that the
+pinned Python has a prebuilt wheel for it, so nothing compiles.
 
 ### Docker Compose — the full stack, including the API
 
@@ -234,7 +260,7 @@ python scripts/smoke_test.py http://localhost:8000
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-pytest                                        # 48 tests
+pytest                                        # 51 tests
 ruff check . && ruff format --check .
 ```
 
@@ -331,7 +357,7 @@ classification.
 | Modeling | scikit-learn, XGBoost |
 | Explainability | SHAP |
 | Monitoring | Evidently |
-| Serving | FastAPI, Uvicorn, Pydantic v2 |
+| Serving | FastAPI, Uvicorn, Pydantic v2 (models loaded with joblib) |
 | Dashboard | Streamlit (hosted on Streamlit Community Cloud) |
 | Packaging | Docker, Docker Compose |
 | Quality | pytest, ruff, pre-commit |
@@ -344,9 +370,14 @@ key is needed to run or view any part of this project.
 
 ## Testing
 
-48 tests covering schema validation, the grouped split, encoder behaviour, the
+51 tests covering schema validation, the grouped split, encoder behaviour, the
 selection rule, SHAP explainer dispatch, API endpoints, in-process inference, and
 the dashboard booting and scoring with no API running.
+
+Two guard the deployment specifically: one asserts the serving modules never
+import mlflow (the dependency that broke the first hosted build), and one asserts
+the joblib-loaded pipeline scores identically to the MLflow-loaded one, so the
+deployed model cannot silently diverge from the evaluated one.
 
 The leakage tests were **mutation-checked** rather than trusted. Reverting to a
 naive row split, zeroing the unseen-category fallback, restoring the strict POA
@@ -363,7 +394,7 @@ A test that cannot fail is not a test.
 
 ```
 src/healthcare_mlops/   config, ingestion, validation, features, models,
-                        evaluation, SHAP, ZenML pipeline
+                        evaluation, SHAP, inference, schemas, ZenML pipeline
 app/api/                FastAPI service
 app/dashboard/          Streamlit dashboard (scores in-process)
 monitoring/             Evidently drift reporting

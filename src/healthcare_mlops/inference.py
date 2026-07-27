@@ -6,6 +6,20 @@ the hosted dashboard cannot drift from what the API would have returned.
 
 Loading directly also means the dashboard has no runtime dependency on any other
 service, which is what lets it run on a free host with nothing else deployed.
+
+Why joblib rather than mlflow.sklearn.load_model
+------------------------------------------------
+Training exports MLflow model directories, and the artefact inside one is a
+plain pickled scikit-learn ``Pipeline``. Reading it back needs scikit-learn and
+nothing else, whereas importing ``mlflow`` pulls in the tracking client and with
+it pyarrow, sqlalchemy, and alembic -- none of which a read-only inference path
+touches.
+
+That weight is not merely untidy. On a hosted runner with no prebuilt pyarrow
+wheel for its Python version, the install falls back to compiling pyarrow from
+source and fails for want of cmake. Loading the pickle directly keeps the serving
+dependency set to what serving actually uses, and is verified against the mlflow
+loader in the test suite so the two cannot silently diverge.
 """
 
 from __future__ import annotations
@@ -14,7 +28,7 @@ import json
 import logging
 from dataclasses import dataclass
 
-import mlflow
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.pipeline import Pipeline
@@ -69,14 +83,14 @@ def load_bundle() -> ModelBundle:
     Raises:
         FileNotFoundError: If the exported model directory is missing.
     """
-    if not config.CLASSIFIER_DIR.exists():
+    if not config.CLASSIFIER_PICKLE.exists():
         raise FileNotFoundError(
-            f"No exported model at {config.CLASSIFIER_DIR}. "
+            f"No exported model at {config.CLASSIFIER_PICKLE}. "
             "Run: python -m src.healthcare_mlops.train_pipeline"
         )
 
-    classifier = mlflow.sklearn.load_model(str(config.CLASSIFIER_DIR))
-    regressor = mlflow.sklearn.load_model(str(config.REGRESSOR_DIR))
+    classifier = joblib.load(config.CLASSIFIER_PICKLE)
+    regressor = joblib.load(config.REGRESSOR_PICKLE)
     metadata = json.loads(config.METADATA_FILE.read_text(encoding="utf-8"))
 
     explainer: explain.PredictionExplainer | None

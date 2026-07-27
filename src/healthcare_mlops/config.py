@@ -18,7 +18,17 @@ EXPORTED_MODEL_DIR = PROJECT_ROOT / "exported_model"
 CLASSIFIER_DIR = EXPORTED_MODEL_DIR / "tier_classifier"
 REGRESSOR_DIR = EXPORTED_MODEL_DIR / "charge_regressor"
 METADATA_FILE = EXPORTED_MODEL_DIR / "model_metadata.json"
-SHAP_BACKGROUND_FILE = EXPORTED_MODEL_DIR / "shap_background.parquet"
+
+# The pickled sklearn pipelines inside the MLflow model directories. Serving
+# loads these directly rather than going through mlflow.sklearn.load_model: the
+# pickle is a plain sklearn Pipeline, so reading it needs only scikit-learn,
+# while importing mlflow drags in pyarrow, sqlalchemy, and alembic that a
+# read-only inference path never uses. Training still exports MLflow format.
+CLASSIFIER_PICKLE = CLASSIFIER_DIR / "model.pkl"
+REGRESSOR_PICKLE = REGRESSOR_DIR / "model.pkl"
+
+# CSV rather than parquet so reading the background needs no parquet engine.
+SHAP_BACKGROUND_FILE = EXPORTED_MODEL_DIR / "shap_background.csv"
 
 # Rows of training data shipped alongside the model as a SHAP background
 # distribution. Small enough to commit, large enough to be representative -- and

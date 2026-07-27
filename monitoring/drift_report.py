@@ -28,12 +28,11 @@ import argparse
 import logging
 from pathlib import Path
 
-import mlflow
 import pandas as pd
 from evidently import DataDefinition, Dataset, Report
 from evidently.presets import DataDriftPreset
 
-from src.healthcare_mlops import config, models
+from src.healthcare_mlops import config, inference, models
 from src.healthcare_mlops import data_ingestion as ingestion
 from src.healthcare_mlops import feature_engineering as features
 
@@ -169,7 +168,7 @@ def main() -> None:
     feature_path = build_report(reference, current, arguments.output_dir / "feature_drift.html")
     logger.info("Feature drift report: %s", feature_path)
 
-    classifier = mlflow.sklearn.load_model(str(config.CLASSIFIER_DIR))
+    classifier = inference.load_bundle().classifier
     reference_predictions = pd.DataFrame(
         {PREDICTION_COLUMN: models.to_tier_labels(classifier.predict(reference))}
     )

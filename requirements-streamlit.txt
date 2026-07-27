@@ -1,0 +1,19 @@
+# Dependencies for the Streamlit Community Cloud deployment only.
+#
+# Deliberately narrower than requirements.txt. The hosted dashboard loads the
+# pickled sklearn pipeline from exported_model/ and scores it -- it never trains,
+# never writes to a tracking server, and never serves HTTP. So mlflow, zenml,
+# dvc, evidently, fastapi, and uvicorn are all absent: they would add build time
+# and failure surface for code paths this deployment does not execute.
+#
+# Note on pyarrow: it stays in the resolved tree regardless, because streamlit
+# itself requires pyarrow>=7. It cannot be removed. What matters is that the
+# Python version has a prebuilt pyarrow wheel -- see runtime.txt.
+streamlit>=1.38,<2.0
+pandas>=2.2,<3.0
+numpy>=1.26,<2.0
+scikit-learn==1.6.1
+xgboost>=2.0,<3.0
+shap>=0.46,<1.0
+joblib>=1.3,<2.0
+pydantic>=2.9,<3.0

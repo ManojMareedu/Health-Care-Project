@@ -295,7 +295,7 @@ def export_best_models(
     x_train.sample(
         n=min(config.SHAP_BACKGROUND_ROWS, len(x_train)),
         random_state=config.RANDOM_STATE,
-    ).to_parquet(config.SHAP_BACKGROUND_FILE, index=False)
+    ).to_csv(config.SHAP_BACKGROUND_FILE, index=False)
 
     metadata = {
         "classifier": {
