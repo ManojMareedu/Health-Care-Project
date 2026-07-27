@@ -75,12 +75,12 @@ class FrequencyEncoder(BaseEstimator, TransformerMixin):
         Returns:
             The fitted encoder.
         """
-        X = pd.DataFrame(X)
-        self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+        frame = pd.DataFrame(X)
+        self.feature_names_in_ = np.asarray(frame.columns, dtype=object)
         self.frequency_maps_ = {}
         self.unseen_values_ = {}
-        for column in X.columns:
-            counts = X[column].value_counts(normalize=self.normalize)
+        for column in frame.columns:
+            counts = frame[column].value_counts(normalize=self.normalize)
             self.frequency_maps_[column] = counts.to_dict()
             # An unseen code is, by definition, rarer than anything observed --
             # so the training minimum is the honest fallback. Never 0, which
@@ -97,11 +97,11 @@ class FrequencyEncoder(BaseEstimator, TransformerMixin):
         Returns:
             A float array with one encoded column per input column.
         """
-        X = pd.DataFrame(X)
-        encoded = pd.DataFrame(index=X.index)
+        frame = pd.DataFrame(X)
+        encoded = pd.DataFrame(index=frame.index)
         for column in self.feature_names_in_:
             encoded[column] = (
-                X[column].map(self.frequency_maps_[column]).fillna(self.unseen_values_[column])
+                frame[column].map(self.frequency_maps_[column]).fillna(self.unseen_values_[column])
             )
         return encoded.to_numpy(dtype=float)
 
