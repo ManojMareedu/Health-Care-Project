@@ -33,6 +33,5 @@ graphify-out/
 # ZenML local metadata
 .zen/
 
-# Build spec, kept locally but not published (mentions the assistant by name,
-# which the projects own no-AI-attribution rule forbids in the repo)
+# Local build spec, not part of the published product
 CLAUDE.md
