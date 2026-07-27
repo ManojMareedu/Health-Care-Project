@@ -3,13 +3,6 @@ services:
     build: .
     image: healthcare-claims-mlops:latest
     container_name: healthcare-api
-    # Override the image default (which runs both services on one port for
-    # single-port hosts); compose runs them as two independent services.
-    command:
-      - uvicorn
-      - app.api.main:app
-      - --host=0.0.0.0
-      - --port=8000
     ports:
       - "8000:8000"
     healthcheck:
@@ -24,6 +17,10 @@ services:
     build: .
     image: healthcare-claims-mlops:latest
     container_name: healthcare-dashboard
+    # Same image, different entrypoint. The dashboard scores in-process from
+    # exported_model/ rather than calling the API, so it needs no network
+    # dependency on the api service -- that is what lets the same file deploy
+    # unchanged to Streamlit Community Cloud, where no API exists.
     command:
       - streamlit
       - run
@@ -33,11 +30,4 @@ services:
       - --server.headless=true
     ports:
       - "8501:8501"
-    environment:
-      # Service name, not localhost -- the dashboard reaches the API across the
-      # compose network, where localhost would resolve to its own container.
-      API_URL: http://api:8000
-    depends_on:
-      api:
-        condition: service_healthy
     restart: unless-stopped
