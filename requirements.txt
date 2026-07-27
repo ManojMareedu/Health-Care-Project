@@ -1,11 +1,17 @@
-# Runtime dependencies for the inference API and dashboard.
-# Kept deliberately narrow so the serving container stays small: training-only
-# tooling (ZenML, DVC, Evidently, pandera) lives in requirements-dev.txt.
-numpy>=1.26,<2.0
-pandas>=2.2,<3.0
-scikit-learn==1.6.1  # must match the version the pipeline was pickled with
-xgboost>=2.0,<3.0
-shap>=0.46,<1.0
+# Runtime dependencies for the inference API and dashboard container.
+# Kept deliberately narrow so the serving image stays small: training-only
+# tooling (ZenML, MLflow, DVC, Evidently, pandera) lives in requirements-dev.txt.
+#
+# No pyarrow floor here on purpose. This image builds on Python 3.12, where
+# pyarrow 19 has wheels, and pinning >=22 would conflict with mlflow's
+# pyarrow<18 constraint in requirements-dev.txt. The >=22 floor belongs only to
+# requirements-streamlit.txt, which builds on Python 3.14.
+numpy>=2.3.2,<3.0
+pandas>=2.3.3,<3.0
+# Exact pin: must match the version exported_model/ was pickled with.
+scikit-learn==1.9.0
+xgboost>=2.1,<3.0
+shap>=0.50,<1.0
 joblib>=1.3,<2.0
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0

@@ -1,1 +1,11 @@
+# Streamlit Community Cloud currently IGNORES this file and builds on Python
+# 3.14 regardless (streamlit/streamlit#15326, open since May 2026). It is kept
+# because it is harmless, it documents intent, and it will take effect if that
+# bug is fixed.
+#
+# Do not treat this pin as the fix for a failed build. The actual requirement is
+# that every package in requirements-streamlit.txt has a cp314 wheel -- see the
+# comments in that file. Two deploys failed because pyarrow, scikit-learn, and
+# numpy resolved to versions predating cp314 support and fell back to compiling
+# from source in an image with no cmake or C/Fortran toolchain.
 python-3.12

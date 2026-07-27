@@ -219,23 +219,50 @@ or environment variable to configure.
    `requirements-streamlit.txt` and Python version to **3.12**
 5. Deploy
 
-#### Why a separate requirements file
+#### Why a separate requirements file, and why every pin has a floor
 
-The first deploy failed, and the cause is worth recording. Streamlit Cloud
-provisioned Python 3.14, `mlflow` depends on `pyarrow`, and pyarrow had no
-prebuilt wheel for 3.14 — so the installer tried to compile it from source and
-died with `error: command 'cmake' failed: No such file or directory`.
+Two deploys failed here, and the diagnosis is worth recording because the
+obvious fix was wrong twice.
 
-The fix was not to add cmake. The dashboard only needs to load a pickled
-scikit-learn pipeline and call `.predict()`; it never touches MLflow's tracking
-client. So serving now loads the pipeline with `joblib` directly and MLflow is
-absent from the serving path entirely — dropping sqlalchemy, alembic, and the
-rest of the tracking stack with it. `runtime.txt` pins the interpreter so a
-future dependency cannot silently land on a Python version with no wheels.
+Streamlit Community Cloud builds on **Python 3.14** and currently ignores
+`runtime.txt` entirely ([streamlit#15326](https://github.com/streamlit/streamlit/issues/15326)).
+Any dependency without a cp314 wheel therefore gets compiled from source, in a
+build image with no cmake and no C/Fortran toolchain. The failure surfaced as:
 
-Worth being precise: pyarrow is *still* in the resolved tree, because Streamlit
-itself requires `pyarrow>=7`. It cannot be removed. What changed is that the
-pinned Python has a prebuilt wheel for it, so nothing compiles.
+```
+error: command 'cmake' failed: No such file or directory
+Failed to build pyarrow
+```
+
+**Attempt one** blamed pyarrow's presence and removed `mlflow` from the serving
+path — the dashboard only unpickles a scikit-learn pipeline and calls
+`.predict()`, so it never needed MLflow's tracking client, and dropping it took
+sqlalchemy and alembic with it. Worth doing, but it did not fix the build:
+Streamlit *itself* requires `pyarrow>=7`, so pyarrow is in the tree no matter
+what.
+
+**Attempt two** pinned Python via `runtime.txt`. That was ineffective because of
+the platform bug above.
+
+**What actually fixed it** was ensuring every resolved package has a cp314
+wheel, verified against PyPI rather than assumed:
+
+| Package | Floor | Why |
+|---|---|---|
+| `numpy` | `>=2.3.2` | **No numpy 1.x release has a cp314 wheel at all** |
+| `scikit-learn` | `==1.9.0` | 1.7.2 is the first with cp314; exact-pinned to the artefact |
+| `pyarrow` | `>=22.0` | First with cp314; pinned explicitly so the resolver cannot regress |
+| `shap` | `>=0.50` | Earlier releases have no cp314 wheel |
+| `pandas` | `>=2.3.3` | First with cp314 |
+| `xgboost` | `>=2.1,<3.0` | Wheels are version-agnostic; `<3.0` avoids a 200MB CUDA dependency |
+
+Because the scikit-learn pin moved, the models were **retrained and re-exported**
+under 1.9.0 so the training, Docker, and hosted environments all run the same
+version. Every metric in the results tables above reproduced to four decimal
+places, so those numbers are unchanged.
+
+`runtime.txt` is kept — it is harmless and will take effect if the platform bug
+is fixed — but it is not what makes the build work.
 
 ### Docker Compose — the full stack, including the API
 
