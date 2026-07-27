@@ -1,0 +1,4 @@
+[core]
+    remote = localremote
+['remote "localremote"']
+    url = /Users/manojmareedu/.dvc-local-remote-healthcare
