@@ -1,224 +1,345 @@
-# Healthcare Claims Analytics — Predictive Modeling of Patient Charge Classification
+# Healthcare Claims Cost Intelligence
 
-![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python) ![R](https://img.shields.io/badge/R-4.x-276DC3?logo=r) ![Jupyter](https://img.shields.io/badge/Jupyter-Notebook-orange?logo=jupyter) ![License](https://img.shields.io/badge/License-Academic-lightgrey) ![Status](https://img.shields.io/badge/Status-Complete-brightgreen)
+An end-to-end ML system that predicts the **cost tier** and **total charge** of a
+Medicare-style claim, with SHAP attributions behind every prediction, served
+through a containerized FastAPI service and a Streamlit dashboard.
 
-> **Transforming synthetic Medicare-style claims data into actionable cost-risk intelligence — combining multi-source data integration, frequency-encoded clinical features, and ensemble classification to predict patient total charge tiers, enabling precision resource allocation and proactive cost containment strategies.**
-
----
-
-## Table of Contents
-
-- [Business Impact](#business-impact)
-- [Project Overview](#project-overview)
-- [Key Findings](#key-findings)
-- [Dataset](#dataset)
-- [Methodology](#methodology)
-- [Technical Architecture](#technical-architecture)
-- [Results](#results)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
-- [Tech Stack](#tech-stack)
-- [Author](#author)
+This started as an academic R + Jupyter analysis. Rebuilding it as a production
+system surfaced five methodology defects in the original — including one that
+had silently deleted an entire state from the dataset. Those fixes are
+documented below, because finding them is the more interesting part of the work.
 
 ---
 
-## Business Impact
+## Why this matters
 
-Healthcare cost overruns and unpredictable claim volumes represent one of the most operationally expensive challenges facing payers, hospital systems, and health policy administrators. This project delivers a **data-driven charge classification framework** that directly addresses high-value operational decisions:
+Payers and hospital finance teams settle claims faster than they can review
+them. Knowing which claims will land in a high-charge tier *before* settlement
+lets an organization:
 
-- **Cost Risk Stratification:** By predicting which patient claims fall into high-charge tiers (>$10,000 or >$100,000), payers and hospital finance teams can proactively flag high-risk cases for utilization review and care management intervention before claims are settled.
-- **Claims Processing Optimization:** Classification of total charge into discrete cost bands enables intelligent routing of claims — directing complex, high-value cases to specialist review teams while automating low-charge claim approvals.
-- **Population Health Investment:** Identifying diagnosis codes and claim volume patterns most predictive of high total charges supports targeted population health programs, disease management protocols, and preventive care investments that reduce downstream acute care costs.
-- **Provider Network Strategy:** State-level provider charge analysis supports payer network tiering, contract renegotiation benchmarking, and out-of-network liability assessment.
-- **Regulatory & Compliance Readiness:** Linking median household income to charge patterns provides an evidence base for value-based care program design and health equity reporting under CMS quality frameworks.
+- **Flag high-cost claims for utilization review** while intervention is still possible
+- **Route intelligently** — auto-approve the routine, escalate the complex
+- **Target population-health investment** at the diagnoses and states driving cost
 
----
-
-## Project Overview
-
-This project constructs a **multi-stage healthcare analytics pipeline** that integrates synthetic Medicare-style inpatient and outpatient claims with state-level socioeconomic indicators to predict patient total charge classification. The core analytical question: *Can clinical diagnosis codes, claim volume, care setting, and regional economic context predict the cost tier of a patient's combined inpatient-outpatient charge burden?*
-
-The pipeline spans data engineering (multi-source claims merging), feature engineering (frequency encoding of ICD diagnosis codes, dummy encoding of clinical indicators), regression modeling (log-transformed total charge), and multi-class classification (five cost tiers) using KNN, Decision Tree, and Random Forest algorithms.
+State-level median income is carried as a socioeconomic covariate so cost
+patterns can be read with health-equity context rather than in isolation.
 
 ---
 
-## Key Findings
-
-| Finding | Detail |
-|---|---|
-| **Dataset Scale** | 58,066 inpatient claims and 575,092 outpatient claims merged into 46,059 patient-level records |
-| **Geographic Coverage** | 51 U.S. state/territory codes represented across both inpatient and outpatient datasets |
-| **Total Charge Range** | Inpatient CLM_PMT_AMT from $62.44 to $598,716.31; outpatient CLM_PMT_AMT from $59.64 to $428,631.86 |
-| **Best Classification Model** | Random Forest outperformed KNN and Decision Tree on multi-class charge tier prediction |
-| **Feature Importance** | Diagnosis frequency encoding (inpatient & outpatient ICD codes), number of claims, and median income were leading predictors of total charge tier |
-| **Regression Baseline** | Linear regression on log-transformed total charge established a continuous cost prediction baseline prior to classification |
-| **Cost Tier Design** | Five classes: Class 1 (<$1K), Class 2 ($1K-$10K), Class 3 ($10K-$100K), Class 4 ($100K-$1M), Class 5 (>$1M) |
-| **Data Engineering** | Outpatient records filtered to beneficiaries present in inpatient data; claims aggregated by beneficiary-diagnosis-state groupings before merge |
-
----
-
-## Dataset
-
-> **Note: All claims data used in this project is synthetic (simulated Medicare-style data) generated for academic and analytical purposes. No real patient health information (PHI) is used or stored in this repository.**
-
-| Source | Description | Records |
-|---|---|---|
-| `inpatient.csv` | Synthetic Medicare inpatient claims with 197 columns including ICD diagnosis codes, provider identifiers, DRG codes, claim payment amounts, and admission indicators | 58,066 rows |
-| `outpatient.csv` | Synthetic Medicare outpatient claims with 162 columns including revenue center codes, charge amounts, and rendering physician NPIs | 575,092 rows |
-| `Median_Income.xlsx` | State-level median household income used as a socioeconomic covariate | 51 state/territory entries |
-| `Patient_Claim_Data.xlsx` | Engineered output: merged inpatient-outpatient patient-level dataset used as input to the modeling pipeline | 46,059 records |
-
-**Key features selected for modeling:**
-- `PRNCPAL_DGNS_CD_inp` / `PRNCPAL_DGNS_CD_out` - Principal ICD-10 diagnosis codes (frequency-encoded)
-- `CLM_E_POA_IND_SW1` - Present-on-Admission indicator (dummy-encoded; values: Y, U)
-- `Number_of_Claims_inp` / `Number_of_Claims_out` - Claim volume per beneficiary-diagnosis-state grouping
-- `TOTAL_CHARGE` - Sum of inpatient and outpatient total charges (target variable)
-- `Median_Income` - State-level median household income
-
----
-
-## Methodology
-
-### 1. Data Engineering (Python - Jupyter Notebook)
-- Loaded synthetic Medicare inpatient (58,066 rows x 197 cols) and outpatient (575,092 rows x 162 cols) claim files
-- Standardized `BENE_ID` and `CLM_ID` as integers; applied `.abs()` to correct signed IDs
-- Filtered outpatient records to beneficiaries with matching inpatient claims
-- Selected 7 key features per dataset; labeled patient type (inpatient=1, outpatient=0)
-- Computed `Number_of_Claims` via grouped count transform (beneficiary x diagnosis x state)
-- Aggregated charges by beneficiary-diagnosis-state grouping; merged inpatient and outpatient on `BENE_ID`
-- Exported merged dataset (`Patient_Claim_Data.xlsx`) - 46,059 patient records, 10 columns
-
-### 2. Feature Engineering (R)
-- Computed `TOTAL_CHARGE` as sum of `CLM_TOT_CHRG_AMT_inp` and `CLM_TOT_CHRG_AMT_out` per patient record
-- Merged with `Median_Income.xlsx` on `PRVDR_STATE_CD` to incorporate socioeconomic context
-- Applied **frequency encoding** to high-cardinality ICD-10 diagnosis codes (replacing codes with their frequency counts in the dataset)
-- Applied **dummy encoding** to `CLM_E_POA_IND_SW1` (Present-on-Admission indicator)
-- Log-transformed `TOTAL_CHARGE` for regression modeling to address right-skewed distribution
-- Created 5-class target variable `TC_class` using charge breakpoints: <$1K, $1K-$10K, $10K-$100K, $100K-$1M, >$1M
-
-### 3. Modeling (R - caret framework)
-- **Train/Test Split:** 70/30 stratified partition (seed=1123) applied to both regression and classification tasks
-- **Linear Regression:** Baseline model on log-transformed total charge; evaluated with RMSE
-- **K-Nearest Neighbors (KNN):** Grid search over k in {3, 5, 7, 9, 11} with 5-fold cross-validation
-- **Decision Tree:** `rpart` with `minbucket=10`, `cp=0`; pruned via complexity parameter (CP) plot
-- **Random Forest:** 100 trees (`ntree=100`) with `importance=TRUE`; evaluated via confusion matrix and multiclass AUC (pROC)
-
----
-
-## Technical Architecture
+## Architecture
 
 ```
-Synthetic Medicare Claims (inpatient.csv + outpatient.csv)
-            |
-            v
-  [Python - Healthcareprojectfinal.ipynb]
-  |-- Data Loading & ID Standardization (.abs())
-  |-- Feature Selection (7 cols each dataset)
-  |-- Beneficiary Intersection Filter
-  |-- Number_of_Claims via groupby count transform
-  |-- Charge Aggregation by Beneficiary-Diagnosis-State
-  |-- Inpatient-Outpatient Merge (on BENE_ID)
-  `-- Export -> Patient_Claim_Data.xlsx (46,059 records x 10 cols)
-            |
-            v
-  [R - HealthCare Class Project.R]
-  |-- Load Patient_Claim_Data.xlsx + Median_Income.xlsx
-  |-- TOTAL_CHARGE = CLM_TOT_CHRG_AMT_inp + CLM_TOT_CHRG_AMT_out
-  |-- State-Income Merge (by PRVDR_STATE_CD)
-  |-- Frequency Encoding (ICD-10 Dx codes: inp & out)
-  |-- Dummy Encoding (CLM_E_POA_IND_SW1)
-  |-- Log Transform + 5-Class TC_class Target Creation
-  |-- 70/30 Train-Test Split (seed=1123)
-  `-- Model Training & Evaluation:
-      |-- Linear Regression (log TOTAL_CHARGE -> RMSE)
-      |-- KNN (k in {3,5,7,9,11}, 5-fold CV)
-      |-- Decision Tree (rpart, minbucket=10, cp=0)
-      `-- Random Forest (ntree=100, varImpPlot, multiclass AUC)
+data/raw/  (DVC-tracked: Patient_Claim_Data.xlsx, Median_Income.xlsx)
+      |
+      v
+data_validation.py ......... pandera schemas; rejects malformed rows,
+      |                      asserts cross-column invariants
+      v
+feature_engineering.py ..... GroupShuffleSplit on BENE_ID *before* encoding;
+      |                      frequency + one-hot encoders fit on train only
+      v
+train_pipeline.py (ZenML) .. 4 classifiers + 2 regressors
+      |                      -> MLflow: params, metrics, confusion matrices,
+      |                         feature importance, serialized pipelines
+      v
+exported_model/ ............ best model by documented rule, committed so the
+      |                      demo runs without retraining
+      |
+      +--> app/api/main.py ........ FastAPI: /predict/tier, /predict/charge
+      |                             with SHAP contributions in the response
+      +--> app/dashboard/app.py ... Streamlit: comparison, scoring, methodology
+      +--> monitoring/ ............ Evidently feature + prediction drift
+      |
+      v
+.github/workflows/ci.yml ... ruff -> pytest -> docker build -> live API smoke test
 ```
+
+---
+
+## Corrected methodology
+
+The original implementation is preserved in `legacy/`. Each defect below was
+verified against the actual data before being fixed.
+
+### 1. Beneficiary leakage across the train/test split
+
+`BENE_ID` is **not** a unique row key — 46,059 rows cover only **5,416
+beneficiaries** (~8.5 rows each, one per outpatient diagnosis). Those rows share
+a beneficiary's inpatient charge, claim counts, and state.
+
+The original used a random 70/30 **row** split, which put **4,074 of 5,416
+beneficiaries (75%) on both sides**. The test set was largely a paraphrase of
+the training set.
+
+**Fix:** `GroupShuffleSplit` on `BENE_ID`. Beneficiary overlap is now zero, and
+the pipeline raises if it ever isn't.
+
+This correction is why the random forest scores **76.1%** here against the
+**79.3%** the original reported. The old number was measuring memorization.
+
+### 2. Encoding fit on the full dataset
+
+Diagnosis-code frequencies and the POA dummy were computed over all rows before
+splitting, leaking test-set distribution into every model's features.
+
+**Fix:** both encoders live in a `ColumnTransformer` fit on the training fold
+only. Unseen diagnosis codes fall back to the training-set minimum frequency —
+not zero, which would collide with "absent" in distance-based models.
+
+### 3. Ambiguous state-code rule
+
+Both `PRVDR_STATE_CD_inp` and `_out` exist; the original kept `_inp` and
+silently dropped `_out`, leaving no way to tell whether signal was lost.
+
+**Fix:** the two columns agree on **all 46,059 rows**, so `_inp` drives the
+income join and `_out` is redundant. The rule is stated explicitly *and*
+enforced as a schema check, so a future extract where they disagree fails loudly
+instead of quietly modeling a half-truth.
+
+### 4. Incomplete POA encoding
+
+The original produced only a `CLM_E_POA_IND_SW1_Y` column, treating `U` as an
+implicit reference level with no handling for unseen values at inference.
+
+**Fix:** `OneHotEncoder(handle_unknown="ignore")`. Both levels are now explicit,
+and a novel value encodes as all-zero rather than raising.
+
+### 5. An entire state silently deleted
+
+`Median_Income.xlsx` stores 50 states as integers and **Wyoming as the string
+`"$60,510 "`**. The original ran `as.numeric()` over that column, which turned
+the value into `NA`; a later `na.omit()` dropped every row that inherited it.
+
+Wyoming has exactly **47 claims rows**. The original write-up records this as
+routine *"missing value handling, 47 NAs"* — but nothing was missing. A currency
+formatting artifact removed a whole state from an analysis whose stated purpose
+includes health-equity reporting by state income.
+
+**Fix:** parse the currency string at ingestion. All 51 states and all 46,059
+rows now reach the model.
+
+### Also addressed
+
+- **No validation existed.** pandera schemas now gate every load.
+- **Three outpatient rows carry ICD-10-PCS *procedure* codes** (`0FB43ZZ`,
+  `0FC44ZZ`) in a *diagnosis* column. Too few to fail a run, so they are
+  reported rather than raised — visible instead of silent.
+- **No tracking, registry, API, or tests.** All present now.
 
 ---
 
 ## Results
 
-| Model | Task | Evaluation Metrics |
-|---|---|---|
-| Linear Regression | Continuous charge prediction (log scale) | RMSE on test set |
-| KNN (best k via CV) | 5-class charge tier classification | Accuracy, Confusion Matrix, Multiclass AUC |
-| Decision Tree | 5-class charge tier classification | Accuracy, Confusion Matrix, Multiclass AUC |
-| **Random Forest** | **5-class charge tier classification** | **Best performer: Accuracy, Confusion Matrix, Multiclass AUC, Variable Importance** |
+Test fold: **13,288 rows / 1,625 beneficiaries**, disjoint by beneficiary from
+the 32,771-row training fold.
 
-**Variable Importance (Random Forest):** Diagnosis frequency encoding for both inpatient and outpatient ICD-10 codes, inpatient and outpatient claim volume, and median income were the top predictors of charge tier classification.
+### Cost tier classification
 
-*Visual outputs in the repository: `rf variable importance.png`, `Total charge distribution.png`, `Lo total charge distribution.png`, `Decision Tree CP.png`*
+| Model | Accuracy | Macro-F1 | ROC-AUC (OvR) | Selection score |
+|---|---|---|---|---|
+| KNN | 0.6273 | 0.5101 | 0.7894 | 0.5570 |
+| Decision tree | 0.6930 | 0.6177 | 0.9055 | 0.6478 |
+| Random forest | 0.7614 | 0.7103 | 0.9424 | 0.7307 |
+| **XGBoost** | **0.7911** | **0.7542** | **0.9549** | **0.7690** |
+
+**Selection rule: `0.6 × macro-F1 + 0.4 × accuracy`.** Accuracy alone is the
+wrong criterion here — tier 3 is half the rows, so a model that ignores the rare
+catastrophic tier entirely can still post a respectable number while being
+useless for the actual question. Macro-F1 weights every tier equally, so a model
+has to handle tier 5 (521 rows, 1.1%) to win.
+
+### Charge regression, on `log(TOTAL_CHARGE)`
+
+| Model | RMSE (log) | R² | Median absolute error |
+|---|---|---|---|
+| Linear regression | 1.7395 | 0.2576 | $14,855 |
+| **Ridge regression** | **1.7394** | **0.2577** | **$14,785** |
+
+The regression is honestly weak — R² ≈ 0.26 — and it is reported that way. Six
+features cannot explain charges spanning $129 to $32.6M. The classification
+framing is the one that answers a usable business question, which is why the
+tier model is the primary production surface.
+
+### Cost tier distribution
+
+| Tier | Range | Rows | Share |
+|---|---|---|---|
+| 1 | under $1K | 4,823 | 10.5% |
+| 2 | $1K – $10K | 9,061 | 19.7% |
+| 3 | $10K – $100K | 22,976 | 49.9% |
+| 4 | $100K – $1M | 8,678 | 18.8% |
+| 5 | over $1M | 521 | 1.1% |
 
 ---
 
-## Repository Structure
+## Quick start
 
-```
-Health-Care-Project/
-|-- Healthcareprojectfinal.ipynb          # Python pipeline: data ingestion, merging, feature prep
-|-- HealthCare Class Project.R            # R modeling pipeline: feature engineering + ML models
-|-- Healthcare Analytics Project Group 3.docx  # Project report and analysis documentation
-|-- Frequency Encoding Index.docx         # Reference index for ICD-10 frequency encoding mappings
-|-- Patient_Claim_Data.xlsx               # Engineered dataset: merged inpatient-outpatient claims
-|-- Median_Income.xlsx                    # State-level median household income reference data
-|-- Decision Tree CP.png                  # Complexity parameter plot for decision tree pruning
-|-- rf variable importance.png            # Random Forest variable importance plot
-|-- Total charge distribution.png         # Raw total charge distribution histogram
-|-- Lo total charge distribution.png      # Log-transformed total charge distribution histogram
-`-- README.md
-```
+### Docker Compose (recommended)
 
----
-
-## Getting Started
-
-### Prerequisites
-
-**Python Environment:**
 ```bash
-pip install numpy pandas scikit-learn matplotlib seaborn
+git clone https://github.com/ManojMareedu/Health-Care-Project.git
+cd Health-Care-Project
+docker compose up --build
 ```
 
-**R Environment:**
-```r
-install.packages(c("readxl", "ggplot2", "dplyr", "reshape2",
-                   "fastDummies", "caret", "rpart", "rpart.plot",
-                   "pROC", "randomForest", "yardstick", "tidyverse"))
+- API: <http://localhost:8000> — interactive docs at `/docs`
+- Dashboard: <http://localhost:8501>
+
+Verify the running stack with the same checks CI uses:
+
+```bash
+python scripts/smoke_test.py http://localhost:8000
 ```
 
-### Execution Order
+### Local development
 
-1. **Run the Python notebook first** (`Healthcareprojectfinal.ipynb`) with `inpatient.csv` and `outpatient.csv` in your working directory - this generates `Patient_Claim_Data.xlsx`
-2. **Run the R script** (`HealthCare Class Project.R`) with `Patient_Claim_Data.xlsx` and `Median_Income.xlsx` in your working directory - this executes all feature engineering and model training/evaluation
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
 
-> **Note:** The notebook was developed on Google Colab (TPU runtime). Adjust file paths from `/content/drive/MyDrive/` to your local directory as needed.
+pytest                                        # 41 tests
+ruff check . && ruff format --check .
+```
+
+### Retraining
+
+The raw data is DVC-tracked, so a fresh clone needs `dvc pull` (or the source
+workbooks placed in `data/raw/`) before training. The committed
+`exported_model/` means the API and dashboard run without this step.
+
+```bash
+dvc pull
+python -m src.healthcare_mlops.train_pipeline
+mlflow ui --backend-store-uri sqlite:///mlflow.db   # http://localhost:5000
+```
+
+Setting `DAGSHUB_MLFLOW_URI` points tracking at a hosted MLflow server instead;
+unset, everything stays local and offline.
+
+### Drift monitoring
+
+```bash
+python -m monitoring.drift_report
+# writes monitoring/reports/{feature,prediction}_drift.html
+```
 
 ---
 
-## Tech Stack
+## Example request
 
-| Layer | Technology |
+```bash
+curl -X POST http://localhost:8000/predict/tier \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "PRNCPAL_DGNS_CD_inp": "I10",
+    "PRNCPAL_DGNS_CD_out": "E119",
+    "CLM_E_POA_IND_SW1": "Y",
+    "Number_of_Claims_inp": 3,
+    "Number_of_Claims_out": 7,
+    "Median_Income": 60510
+  }'
+```
+
+```json
+{
+  "tier": 3,
+  "tier_description": "$10K-$100K - elevated cost, sample for review",
+  "confidence": 0.7399,
+  "probabilities": {"1": 0.0000, "2": 0.1541, "3": 0.7399, "4": 0.1059, "5": 0.0000},
+  "top_contributions": [
+    {"feature": "PRNCPAL_DGNS_CD_inp_freq", "contribution": 1.199069, "direction": "increases"},
+    {"feature": "Number_of_Claims_out", "contribution": 0.628999, "direction": "increases"},
+    {"feature": "Median_Income", "contribution": 0.353163, "direction": "increases"}
+  ],
+  "model_name": "xgboost"
+}
+```
+
+---
+
+## Dataset
+
+Synthetic CMS-style claims data — no real patient information, no PHI.
+
+**`Patient_Claim_Data.xlsx`** — 46,059 rows × 10 columns, no nulls. Derived by
+the legacy notebook from CMS inpatient (58,066 × 197) and outpatient
+(575,092 × 162) extracts, which are too large to redistribute and are not in
+this repository. This merged file is the ingestion boundary.
+
+| Column | Type | Notes |
+|---|---|---|
+| `BENE_ID` | int | Beneficiary key — **repeats**, not a row key |
+| `PRNCPAL_DGNS_CD_inp` / `_out` | str | ICD-10, 174 / 211 distinct values |
+| `CLM_E_POA_IND_SW1` | str | Present on admission, `Y` / `U` |
+| `PRVDR_STATE_CD_inp` / `_out` | int | FIPS-style, identical on every row |
+| `Number_of_Claims_inp` / `_out` | int | Claim counts |
+| `CLM_TOT_CHRG_AMT_inp` / `_out` | float | Charge amounts |
+
+**`Median_Income.xlsx`** — 51 rows: state code, name, median household income.
+
+**Target:** `TOTAL_CHARGE = CLM_TOT_CHRG_AMT_inp + CLM_TOT_CHRG_AMT_out`,
+modeled as `log(TOTAL_CHARGE)` for regression and binned into `TC_class` for
+classification.
+
+---
+
+## Tech stack
+
+| Layer | Tool |
 |---|---|
-| Data Engineering | Python 3, pandas, NumPy |
-| Visualization | matplotlib, seaborn, ggplot2 |
-| Feature Engineering | R, dplyr, fastDummies, reshape2 |
-| Machine Learning | R caret, rpart, randomForest, pROC |
-| Development Environment | Google Colab (Python), RStudio (R) |
-| Data Storage | Excel (.xlsx), CSV |
+| Orchestration | ZenML |
+| Experiment tracking | MLflow (local SQLite; DagsHub optional via env var) |
+| Data versioning | DVC (local remote) |
+| Validation | pandera |
+| Modeling | scikit-learn, XGBoost |
+| Explainability | SHAP |
+| Monitoring | Evidently |
+| Serving | FastAPI, Uvicorn, Pydantic v2 |
+| Dashboard | Streamlit |
+| Packaging | Docker, Docker Compose |
+| Quality | pytest, ruff, pre-commit |
+| CI | GitHub Actions |
+
+Every component is free and open source. No paid service, subscription, or API
+key is needed to run or view any part of this project.
+
+---
+
+## Testing
+
+41 tests covering schema validation, the grouped split, encoder behaviour, the
+selection rule, SHAP explainer dispatch, and API endpoints.
+
+The leakage tests were **mutation-checked** rather than trusted. Reverting to a
+naive row split, zeroing the unseen-category fallback, restoring the strict POA
+encoder, and switching frequency encoding to raw counts each make a specific
+test fail. Two tests were rewritten after that check found them passing against
+a deliberately broken implementation — one compared the encoder against itself,
+and one had no test-only categories to detect.
+
+A test that cannot fail is not a test.
+
+---
+
+## Project layout
+
+```
+src/healthcare_mlops/   config, ingestion, validation, features, models,
+                        evaluation, SHAP, ZenML pipeline
+app/api/                FastAPI service
+app/dashboard/          Streamlit dashboard
+monitoring/             Evidently drift reporting
+scripts/                smoke test, service launcher, Space deployment
+tests/                  pytest suite
+exported_model/         committed production models + SHAP background
+legacy/                 original R script, notebook, figures, write-ups
+```
 
 ---
 
 ## Author
 
-**Manoj Mareedu** - Data Scientist / ML Engineer
+**Manoj Mareedu**
 
-[![GitHub](https://img.shields.io/badge/GitHub-ManojMareedu-181717?logo=github)](https://github.com/ManojMareedu)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-manojmareedu-0A66C2?logo=linkedin)](https://www.linkedin.com/in/manojmareedu/)
-
-Developed as part of a Healthcare Analytics graduate project at the **University of Texas at Dallas**.
-
----
-
-*This project is extensible - planned enhancements include SHAP-based model explainability, time-series claim frequency analysis, and integration of CMS beneficiary demographic data for equity-aware modeling.*
+- GitHub: <https://github.com/ManojMareedu>
+- LinkedIn: <https://www.linkedin.com/in/manojmareedu/>
