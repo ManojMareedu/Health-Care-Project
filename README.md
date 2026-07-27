@@ -45,9 +45,11 @@ train_pipeline.py (ZenML) .. 4 classifiers + 2 regressors
 exported_model/ ............ best model by documented rule, committed so the
       |                      demo runs without retraining
       |
+      +--> inference.py ........... single scoring path, shared by both surfaces
       +--> app/api/main.py ........ FastAPI: /predict/tier, /predict/charge
       |                             with SHAP contributions in the response
       +--> app/dashboard/app.py ... Streamlit: comparison, scoring, methodology
+      |                             (scores in-process; this is the public demo)
       +--> monitoring/ ............ Evidently feature + prediction drift
       |
       v
@@ -174,7 +176,42 @@ tier model is the primary production surface.
 
 ## Quick start
 
-### Docker Compose (recommended)
+### What is hosted, and what you run yourself
+
+Being precise about this, because "has a live demo" is easy to overstate:
+
+| Surface | Where it runs | Status |
+|---|---|---|
+| **Streamlit dashboard** | Streamlit Community Cloud | **Publicly hosted** |
+| **FastAPI service** | Your machine, via Docker | **Not publicly hosted** — run it locally |
+
+The FastAPI service is a fully built and verified component, not a sketch: it is
+Dockerized, covered by the test suite, and smoke-tested against a live container
+on every CI run. It simply has no public URL, because every free tier that would
+host an always-on container either requires a paid plan or a payment card, which
+this project does not use.
+
+The hosted dashboard therefore scores claims **in-process** from the committed
+`exported_model/` rather than calling the API over HTTP. Both surfaces import the
+same `src/healthcare_mlops/inference.py`, so they cannot return different answers
+for the same claim — there is one scoring path, exposed two ways.
+
+### Deploying the dashboard yourself
+
+Streamlit Community Cloud is free for public repositories and needs no card. The
+repo is already configured for it — `requirements.txt` and `packages.txt`
+(`libgomp1`, which XGBoost needs) sit at the root, and the app loads
+`exported_model/` from the repo, so there is no database, secret, or environment
+variable to set.
+
+1. Sign in at <https://share.streamlit.io> with GitHub and authorize it
+2. **Create app** -> **Deploy a public app from GitHub**
+3. Repository `ManojMareedu/Health-Care-Project`, branch `main`, main file
+   `app/dashboard/app.py`
+4. Under **Advanced settings**, set Python version to **3.12**
+5. Deploy — the first build takes a few minutes while it installs the dependencies
+
+### Docker Compose — the full stack, including the API
 
 ```bash
 git clone https://github.com/ManojMareedu/Health-Care-Project.git
@@ -185,7 +222,7 @@ docker compose up --build
 - API: <http://localhost:8000> — interactive docs at `/docs`
 - Dashboard: <http://localhost:8501>
 
-Verify the running stack with the same checks CI uses:
+Verify the running stack with the exact checks CI uses:
 
 ```bash
 python scripts/smoke_test.py http://localhost:8000
@@ -197,7 +234,7 @@ python scripts/smoke_test.py http://localhost:8000
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-pytest                                        # 41 tests
+pytest                                        # 48 tests
 ruff check . && ruff format --check .
 ```
 
@@ -295,7 +332,7 @@ classification.
 | Explainability | SHAP |
 | Monitoring | Evidently |
 | Serving | FastAPI, Uvicorn, Pydantic v2 |
-| Dashboard | Streamlit |
+| Dashboard | Streamlit (hosted on Streamlit Community Cloud) |
 | Packaging | Docker, Docker Compose |
 | Quality | pytest, ruff, pre-commit |
 | CI | GitHub Actions |
@@ -307,8 +344,9 @@ key is needed to run or view any part of this project.
 
 ## Testing
 
-41 tests covering schema validation, the grouped split, encoder behaviour, the
-selection rule, SHAP explainer dispatch, and API endpoints.
+48 tests covering schema validation, the grouped split, encoder behaviour, the
+selection rule, SHAP explainer dispatch, API endpoints, in-process inference, and
+the dashboard booting and scoring with no API running.
 
 The leakage tests were **mutation-checked** rather than trusted. Reverting to a
 naive row split, zeroing the unseen-category fallback, restoring the strict POA
@@ -327,7 +365,7 @@ A test that cannot fail is not a test.
 src/healthcare_mlops/   config, ingestion, validation, features, models,
                         evaluation, SHAP, ZenML pipeline
 app/api/                FastAPI service
-app/dashboard/          Streamlit dashboard
+app/dashboard/          Streamlit dashboard (scores in-process)
 monitoring/             Evidently drift reporting
 scripts/                smoke test, service launcher, Space deployment
 tests/                  pytest suite
