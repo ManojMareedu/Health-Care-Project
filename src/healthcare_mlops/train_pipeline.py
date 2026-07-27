@@ -289,6 +289,14 @@ def export_best_models(
     mlflow.sklearn.save_model(classifier, str(config.CLASSIFIER_DIR))
     mlflow.sklearn.save_model(regressor, str(config.REGRESSOR_DIR))
 
+    # SHAP needs a background distribution, and the model-agnostic explainer
+    # needs one even to start. The raw data is DVC-tracked and absent from the
+    # serving container, so a small representative sample ships with the model.
+    x_train.sample(
+        n=min(config.SHAP_BACKGROUND_ROWS, len(x_train)),
+        random_state=config.RANDOM_STATE,
+    ).to_parquet(config.SHAP_BACKGROUND_FILE, index=False)
+
     metadata = {
         "classifier": {
             "name": best_classifier,

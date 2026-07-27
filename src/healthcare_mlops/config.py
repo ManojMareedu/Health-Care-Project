@@ -18,6 +18,14 @@ EXPORTED_MODEL_DIR = PROJECT_ROOT / "exported_model"
 CLASSIFIER_DIR = EXPORTED_MODEL_DIR / "tier_classifier"
 REGRESSOR_DIR = EXPORTED_MODEL_DIR / "charge_regressor"
 METADATA_FILE = EXPORTED_MODEL_DIR / "model_metadata.json"
+SHAP_BACKGROUND_FILE = EXPORTED_MODEL_DIR / "shap_background.parquet"
+
+# Rows of training data shipped alongside the model as a SHAP background
+# distribution. Small enough to commit, large enough to be representative -- and
+# the model-agnostic explainer path is O(background size) per explanation, so
+# this doubles as the latency budget for a KNN production model.
+SHAP_BACKGROUND_ROWS = 200
+SHAP_TOP_FEATURES = 5
 
 MLFLOW_TRACKING_URI = f"sqlite:///{PROJECT_ROOT / 'mlflow.db'}"
 MLFLOW_EXPERIMENT = "healthcare-claims-cost"
