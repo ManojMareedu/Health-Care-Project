@@ -3,6 +3,7 @@
 -r requirements.txt
 
 zenml>=0.68,<1.0
+pymysql>=1.1,<2.0  # ZenML metadata store driver, not pulled in by its own extras
 dvc>=3.55,<4.0
 pandera>=0.20,<1.0
 evidently>=0.4.40,<1.0
