@@ -3,6 +3,13 @@ services:
     build: .
     image: healthcare-claims-mlops:latest
     container_name: healthcare-api
+    # Override the image default (which runs both services on one port for
+    # single-port hosts); compose runs them as two independent services.
+    command:
+      - uvicorn
+      - app.api.main:app
+      - --host=0.0.0.0
+      - --port=8000
     ports:
       - "8000:8000"
     healthcheck:
