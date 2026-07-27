@@ -1,0 +1,36 @@
+services:
+  api:
+    build: .
+    image: healthcare-claims-mlops:latest
+    container_name: healthcare-api
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    image: healthcare-claims-mlops:latest
+    container_name: healthcare-dashboard
+    command:
+      - streamlit
+      - run
+      - app/dashboard/app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
+    ports:
+      - "8501:8501"
+    environment:
+      # Service name, not localhost -- the dashboard reaches the API across the
+      # compose network, where localhost would resolve to its own container.
+      API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
