@@ -140,9 +140,18 @@ the 32,771-row training fold.
 | Model | Accuracy | Macro-F1 | ROC-AUC (OvR) | Selection score |
 |---|---|---|---|---|
 | KNN | 0.6273 | 0.5101 | 0.7894 | 0.5570 |
-| Decision tree | 0.6930 | 0.6177 | 0.9055 | 0.6478 |
-| Random forest | 0.7614 | 0.7103 | 0.9424 | 0.7307 |
-| **XGBoost** | **0.7911** | **0.7542** | **0.9549** | **0.7690** |
+| Decision tree | 0.6930 | 0.6177 | 0.9054 | 0.6478 |
+| Random forest | 0.7682 | 0.7217 | 0.9462 | 0.7403 |
+| **XGBoost** | **0.7888** | **0.7530** | **0.9540** | **0.7673** |
+
+The two tree ensembles are tuned by `RandomizedSearchCV` over **grouped**
+cross-validation folds (`GroupKFold` on `BENE_ID`, scored by macro-F1). Grouping
+the inner folds matters as much as grouping the outer split: a plain `KFold`
+would select hyperparameters against a leaky score and reintroduce, inside the
+search, the exact defect the outer split exists to remove. Tuning moved the
+random forest from 0.7103 to 0.7217 macro-F1 and left XGBoost
+essentially unchanged, which is itself worth reporting — the hand-set values were
+already near the useful range.
 
 **Selection rule: `0.6 × macro-F1 + 0.4 × accuracy`.** Accuracy alone is the
 wrong criterion here — tier 3 is half the rows, so a model that ignores the rare
@@ -155,12 +164,22 @@ has to handle tier 5 (521 rows, 1.1%) to win.
 | Model | RMSE (log) | R² | Median absolute error |
 |---|---|---|---|
 | Linear regression | 1.7395 | 0.2576 | $14,855 |
-| **Ridge regression** | **1.7394** | **0.2577** | **$14,785** |
+| Ridge regression | 1.7394 | 0.2577 | $14,785 |
+| Random forest regressor | 0.8093 | 0.8393 | $7,983 |
+| **XGBoost regressor** | **0.7414** | **0.8651** | **$7,030** |
 
-The regression is honestly weak — R² ≈ 0.26 — and it is reported that way. Six
-features cannot explain charges spanning $129 to $32.6M. The classification
-framing is the one that answers a usable business question, which is why the
-tier model is the primary production surface.
+**An earlier version of this README claimed the regression was at a hard ceiling —
+"six features cannot explain charges spanning $129 to $32.6M." That conclusion was
+wrong, and it was wrong because only linear models had been tried.** Fitting tree
+ensembles on the identical leakage-free split lifts R² from 0.26 to
+0.87 and roughly halves the median dollar error, from
+$14,785 to $7,030.
+
+The relationship between utilisation and charge is strongly non-linear, and the
+linear models were measuring their own inability to represent it rather than any
+limit of the features. The lesson is the general one: "the data can't support a
+better model" is a claim that needs a non-linear baseline behind it before it is
+worth believing.
 
 ### Cost tier distribution
 
@@ -383,6 +402,7 @@ classification.
 | Validation | pandera |
 | Modeling | scikit-learn, XGBoost |
 | Explainability | SHAP |
+| Tuning | RandomizedSearchCV over GroupKFold folds |
 | Monitoring | Evidently |
 | Serving | FastAPI, Uvicorn, Pydantic v2 (models loaded with joblib) |
 | Dashboard | Streamlit (hosted on Streamlit Community Cloud) |

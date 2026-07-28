@@ -7,6 +7,8 @@ and both surfaces agree because they share one scoring module.
 
 from __future__ import annotations
 
+import json
+
 import joblib
 import pytest
 
@@ -167,10 +169,28 @@ def test_dashboard_scores_a_claim():
     """Submitting the form must produce a tier and a charge, not just render."""
     from streamlit.testing.v1 import AppTest
 
-    app_test = AppTest.from_file("app/dashboard/app.py", default_timeout=120).run()
+    app_test = AppTest.from_file("app/dashboard/app.py", default_timeout=180).run()
     app_test.button[0].click().run()
 
     assert not app_test.exception
     assert not app_test.error
     labels = {metric.label for metric in app_test.metric}
-    assert {"Confidence", "Predicted charge"} <= labels
+    assert {"Estimated total charge", "Tier confidence"} <= labels
+    # The coloured badge is the primary output; a render that lost it would still
+    # pass a metrics-only assertion.
+    assert any("PREDICTED COST TIER" in str(block.value) for block in app_test.markdown)
+
+
+@needs_model
+def test_dashboard_shows_all_candidate_models():
+    """The comparison tab must list every trained candidate, not a stale subset."""
+    from streamlit.testing.v1 import AppTest
+
+    app_test = AppTest.from_file("app/dashboard/app.py", default_timeout=180).run()
+    rendered = {name for table in app_test.dataframe for name in table.value.index}
+
+    metadata = json.loads(config.METADATA_FILE.read_text(encoding="utf-8"))
+    expected = set(metadata["classifier"]["all_candidates"]) | set(
+        metadata["regressor"]["all_candidates"]
+    )
+    assert expected <= rendered

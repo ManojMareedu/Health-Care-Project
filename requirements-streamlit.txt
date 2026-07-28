@@ -33,6 +33,18 @@ scikit-learn==1.9.0
 # <3.0 avoids xgboost 3.x pulling nvidia-nccl-cu12 (~200MB) into a CPU-only demo.
 xgboost>=2.1,<3.0
 shap>=0.50,<1.0
+# numba/llvmlite are transitive via shap, and they are the most dangerous pair
+# here: numba hard-pins an exact llvmlite range per release, and llvmlite refuses
+# to install at all on an unsupported Python ("Cannot install on Python version
+# 3.14.x; only versions >=3.6,<3.10 are supported"). If the resolver is ever
+# pushed backwards -- by a numpy<2 ceiling, say -- it lands on numba 0.53-era
+# releases pinning llvmlite==0.36.0 and the build dies.
+#
+# numba 0.63.0 is the first release with a stable cp314 wheel (verified on PyPI;
+# 0.63.0 through 0.66.0 all ship one). 0.66.0 requires llvmlite>=0.48,<0.49,
+# which also has cp314 wheels. Pinning the floor explicitly means the resolver
+# cannot reach the ancient pairing even if another constraint shifts.
+numba>=0.63
 joblib>=1.3,<2.0
 pydantic>=2.9,<3.0
 pyarrow>=22.0

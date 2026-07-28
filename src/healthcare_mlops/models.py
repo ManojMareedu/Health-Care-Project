@@ -18,12 +18,14 @@ so it cannot drift.
 from __future__ import annotations
 
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.model_selection import GroupKFold, RandomizedSearchCV
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.tree import DecisionTreeClassifier
-from xgboost import XGBClassifier
+from xgboost import XGBClassifier, XGBRegressor
 
 from . import config
 from .feature_engineering import build_preprocessor
@@ -103,17 +105,110 @@ def classifier_candidates() -> dict[str, Pipeline]:
 def regressor_candidates() -> dict[str, Pipeline]:
     """Build the candidate log-charge regressors.
 
+    Linear models alone cannot answer whether the weak fit is a property of the
+    features or of the model class, so two tree ensembles are included. If a
+    gradient-boosted regressor cannot beat ridge on the same leakage-free split,
+    the relationship really is close to linear in log space and the ceiling is
+    the feature set, not the estimator.
+
     Returns:
         Mapping of model name to an unfitted pipeline.
     """
     estimators = {
         "linear_regression": LinearRegression(),
         "ridge_regression": Ridge(alpha=1.0, random_state=config.RANDOM_STATE),
+        "random_forest_regressor": RandomForestRegressor(
+            n_estimators=300,
+            max_depth=16,
+            min_samples_leaf=5,
+            n_jobs=-1,
+            random_state=config.RANDOM_STATE,
+        ),
+        "xgboost_regressor": XGBRegressor(
+            n_estimators=400,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            tree_method="hist",
+            n_jobs=-1,
+            random_state=config.RANDOM_STATE,
+        ),
     }
     return {
         name: Pipeline([("preprocessor", build_preprocessor()), ("model", estimator)])
         for name, estimator in estimators.items()
     }
+
+
+# Search spaces for the two strongest classifiers. Deliberately small: this is a
+# portfolio project on a fixed dataset, and an exhaustive grid would burn compute
+# to move a metric that is limited by six features, not by hyperparameters.
+CLASSIFIER_SEARCH_SPACES: dict[str, dict[str, list]] = {
+    "random_forest": {
+        "model__n_estimators": [200, 300, 500],
+        "model__max_depth": [12, 16, 24, None],
+        "model__min_samples_leaf": [1, 2, 5, 10],
+        "model__max_features": ["sqrt", "log2", 0.5],
+    },
+    "xgboost": {
+        "model__n_estimators": [200, 400, 600],
+        "model__max_depth": [4, 6, 8, 10],
+        "model__learning_rate": [0.03, 0.05, 0.1, 0.2],
+        "model__subsample": [0.7, 0.9, 1.0],
+        "model__colsample_bytree": [0.7, 0.9, 1.0],
+        "model__min_child_weight": [1, 3, 5],
+    },
+}
+
+
+def tune_classifier(
+    name: str,
+    x_train: pd.DataFrame,
+    y_train,
+    groups,
+    n_iter: int = 10,
+    cv_splits: int = 3,
+) -> tuple[Pipeline, dict, float]:
+    """Randomised hyperparameter search under grouped cross-validation.
+
+    The folds are grouped by ``BENE_ID``. Using a plain KFold here would put the
+    same beneficiary on both sides of every internal split and select
+    hyperparameters against a leaky score -- reintroducing, inside the search,
+    exactly the defect the outer split was built to remove.
+
+    Scoring is macro-F1 to match the production selection rule, so the search
+    optimises for the rare catastrophic tier rather than overall accuracy.
+
+    Args:
+        name: Key into ``CLASSIFIER_SEARCH_SPACES``.
+        x_train: Training features.
+        y_train: Zero-based tier labels.
+        groups: Beneficiary ids aligned with ``x_train``.
+        n_iter: Parameter settings sampled.
+        cv_splits: Number of grouped CV folds.
+
+    Returns:
+        ``(best_pipeline, best_params, best_cv_macro_f1)``.
+    """
+    search = RandomizedSearchCV(
+        estimator=classifier_candidates()[name],
+        param_distributions=CLASSIFIER_SEARCH_SPACES[name],
+        n_iter=n_iter,
+        scoring="f1_macro",
+        cv=GroupKFold(n_splits=cv_splits),
+        random_state=config.RANDOM_STATE,
+        n_jobs=-1,
+        refit=True,
+        error_score="raise",
+    )
+    # XGBoost's sample weights are deliberately omitted during the search:
+    # sklearn will not resample a fit-time weight vector per fold without
+    # metadata routing enabled. Every sampled configuration is therefore
+    # penalised identically, so the ranking still holds, and the winning
+    # configuration is refitted with weights before export.
+    search.fit(x_train, y_train, groups=groups)
+    return search.best_estimator_, search.best_params_, float(search.best_score_)
 
 
 def sample_weights(y) -> np.ndarray:

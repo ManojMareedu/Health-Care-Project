@@ -140,14 +140,51 @@ def _log_importance_plot(pipeline_obj: Pipeline, name: str) -> None:
 
 
 @step
+def tune_classifiers(train: pd.DataFrame) -> Annotated[dict, "tuned_params"]:
+    """Search hyperparameters for the two strongest classifiers.
+
+    Only the tree ensembles are tuned. KNN and a single decision tree are in the
+    comparison as baselines, and tuning them would spend compute without changing
+    which model ships.
+
+    Args:
+        train: Training fold. The search never sees the held-out fold.
+
+    Returns:
+        Mapping of model name to its best parameters and cross-validated score.
+    """
+    mlflow.set_tracking_uri(_tracking_uri())
+    mlflow.set_experiment(config.MLFLOW_EXPERIMENT)
+
+    x_train = features.feature_frame(train)
+    y_train = models.to_zero_based(train[config.TARGET_TIER])
+    groups = train[config.GROUP_KEY]
+
+    tuned: dict[str, dict] = {}
+    for name in models.CLASSIFIER_SEARCH_SPACES:
+        with mlflow.start_run(run_name=f"tune-{name}"):
+            _, best_params, best_score = models.tune_classifier(name, x_train, y_train, groups)
+            mlflow.log_param("model", name)
+            mlflow.log_param("task", "hyperparameter_search")
+            mlflow.log_param("cv", "GroupKFold(3) on BENE_ID")
+            mlflow.log_param("scoring", "f1_macro")
+            mlflow.log_params({k: v for k, v in best_params.items()})
+            mlflow.log_metric("cv_macro_f1", best_score)
+            tuned[name] = {"best_params": best_params, "cv_macro_f1": best_score}
+            logger.info("tuned %s -> cv_macro_f1=%.4f %s", name, best_score, best_params)
+    return tuned
+
+
+@step
 def train_classifiers(
-    train: pd.DataFrame, test: pd.DataFrame
+    train: pd.DataFrame, test: pd.DataFrame, tuned: dict
 ) -> Annotated[dict, "classifier_results"]:
     """Train and evaluate all four tier classifiers, logging each to MLflow.
 
     Args:
         train: Training fold.
         test: Held-out fold.
+        tuned: Best parameters from ``tune_classifiers``, applied where present.
 
     Returns:
         Mapping of model name to its test metrics.
@@ -163,6 +200,8 @@ def train_classifiers(
 
     results: dict[str, dict[str, float]] = {}
     for name, candidate in models.classifier_candidates().items():
+        if name in tuned:
+            candidate.set_params(**tuned[name]["best_params"])
         with mlflow.start_run(run_name=f"classifier-{name}"):
             if name == "xgboost":
                 candidate.fit(x_train, y_train, model__sample_weight=weights)
@@ -247,6 +286,7 @@ def export_best_models(
     test: pd.DataFrame,
     classifier_results: dict,
     regressor_results: dict,
+    tuned: dict,
 ) -> Annotated[dict, "export_metadata"]:
     """Refit and export the winning models so the demo runs without retraining.
 
@@ -259,6 +299,8 @@ def export_best_models(
         test: Held-out fold.
         classifier_results: Metrics from ``train_classifiers``.
         regressor_results: Metrics from ``train_regressors``.
+        tuned: Best parameters from ``tune_classifiers``, reapplied before the
+            final refit so the exported model matches the evaluated one.
 
     Returns:
         The metadata written to disk.
@@ -272,6 +314,8 @@ def export_best_models(
     y_train_tier = models.to_zero_based(train[config.TARGET_TIER])
 
     classifier = models.classifier_candidates()[best_classifier]
+    if best_classifier in tuned:
+        classifier.set_params(**tuned[best_classifier]["best_params"])
     if best_classifier == "xgboost":
         classifier.fit(
             x_train, y_train_tier, model__sample_weight=models.sample_weights(y_train_tier)
@@ -310,6 +354,7 @@ def export_best_models(
             "metrics": regressor_results[best_regressor],
             "all_candidates": regressor_results,
         },
+        "tuning": tuned,
         "tier_labels": config.TIER_LABELS,
         "tier_descriptions": {str(k): v for k, v in config.TIER_DESCRIPTIONS.items()},
         "feature_columns": config.FEATURE_COLUMNS,
@@ -323,14 +368,19 @@ def export_best_models(
     return metadata
 
 
-@pipeline(name="healthcare_claims_training")
+# Caching is off deliberately. ZenML keys a step's cache on its inputs, so
+# changing only the *body* of a step -- adding a model candidate, say -- replays
+# the stale result and silently exports metrics for models that never ran. A
+# training pipeline that reports numbers must re-execute.
+@pipeline(name="healthcare_claims_training", enable_cache=False)
 def training_pipeline() -> None:
     """Wire the steps into the end-to-end training run."""
     frame = ingest_and_validate()
     train, test = split_data(frame)
-    classifier_results = train_classifiers(train, test)
+    tuned = tune_classifiers(train)
+    classifier_results = train_classifiers(train, test, tuned)
     regressor_results = train_regressors(train, test)
-    export_best_models(train, test, classifier_results, regressor_results)
+    export_best_models(train, test, classifier_results, regressor_results, tuned)
 
 
 def main() -> None:
